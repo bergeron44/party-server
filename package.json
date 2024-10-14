@@ -1,13 +1,14 @@
 {
   "name": "party-app",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "A party app that uses Express, MongoDB, and Socket.IO",
+  "main": "server.js",  
   "scripts": {
+    "start": "node server.js",  
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
-  "author": "",
+  "author": "Ron Berger",  
   "license": "ISC",
   "dependencies": {
     "express": "^4.21.1",
