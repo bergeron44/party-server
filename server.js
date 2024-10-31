@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const { type } = require('os');
 
 // Initialize Express app
 const app = express();
@@ -39,6 +40,7 @@ const GameSchema = new mongoose.Schema({
   currentQuestionIndex: { type: Number, default: 0 }, // Track current question number
   players: [{ name: String, score: { type: Number, default: 0 }, socketId: String }],
   gameOver: { type: Boolean, default: false },
+  gameType: {type:String,default:"All"},
   creatorSocketId: String,
 });
 
@@ -46,8 +48,9 @@ const Game = mongoose.model('Game', GameSchema);
 
 // Function to generate a unique game code
 const generateGameCode = () => {
-  return Math.random().toString(36).substring(2, 7).toUpperCase();
+  return Math.floor(100000 + Math.random() * 900000).toString();
 };
+
 
 // Function to shuffle an array (Fisher-Yates shuffle)
 const shuffleArray = (array) => {
@@ -63,7 +66,7 @@ io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 
   // Event listener for joining a game
-  socket.on('join-game', async ({ gameCode, playerName }, callback) => {
+socket.on('join-game', async ({ gameCode, playerName }, callback) => {
     console.log(`User ${playerName} attempting to join game with code: ${gameCode}`);
     
     try {
@@ -102,8 +105,9 @@ io.on('connection', (socket) => {
   });
 
   // Event listener for creating a new game
-  socket.on('create-game', async (playerName, callback) => {
+  socket.on('create-game', async (playerName, gameType,callback) => {
     console.log(`User ${playerName} is creating a new game.`);
+    console.log(gameType);
     const gameCode = generateGameCode();
 
     const newGame = new Game({
@@ -111,6 +115,7 @@ io.on('connection', (socket) => {
       players: [{ name: playerName, socketId: socket.id }],
       questions: [], // Questions will be added when the game starts
       currentQuestionIndex: 0, // Track the current question index
+      gameType:gameType,
       creatorSocketId: socket.id,
     });
 
@@ -121,79 +126,97 @@ io.on('connection', (socket) => {
     callback(gameCode); // Send back the new game code to the client
     io.to(gameCode).emit('players-updated', newGame.players);
   });
+   // Event listener for starting the game
+socket.on('start-game', async (gameCode) => {
+  console.log(`Starting game: ${gameCode}`);
 
-  // Event listener for starting the game
-  socket.on('start-game', async (gameCode) => {
-    console.log(`Starting game: ${gameCode}`);
-
-    try {
-      // Find the game by its code
-      const game = await Game.findOne({ code: gameCode });
-      
-      if (game) {
-        // Pull all questions from the questions collection
-        const allQuestions = await Question.find(); // לא מספק פילטר, יחזיר את כל השאלות
-       console.log(allQuestions); // לוג השאלות שהתקבלו
-        // Shuffle the questions randomly
-        const shuffledQuestions = shuffleArray(allQuestions);
-
-        // Store the shuffled questions in the game's record
-        game.questions = shuffledQuestions;
-        game.currentQuestionIndex = 0; // Start with the first question
-
-        // Save the updated game with the shuffled questions
-        await game.save();
-
-        // Choose a random player to ask the first question
-        const randomPlayerIndex = Math.floor(Math.random() * game.players.length);
-        const selectedPlayer = game.players[randomPlayerIndex].name;
+  try {
+    const game = await Game.findOne({ code: gameCode });
+    
+    if (game) {
+      const allQuestions = await Question.find();
+      let selectedQuestions;
+      console.log(game.gameType);
+      // Filter questions based on game type
+      if (game.gameType === 'friends') {
+        console.log("enter friends");
+        // Select only friend-type questions first
+        const friendQuestions = allQuestions.filter(q => q.type === 'friend');
+        console.log(friendQuestions);
+        const otherQuestions = allQuestions.filter(q => q.type !== 'friend');
+        console.log("new ");
+        console.log(otherQuestions);
         
-        // Emit the first question and the selected player to all players in the game
-        const firstQuestion = shuffledQuestions[0];
-        console.log(firstQuestion);
-        console.log(selectedPlayer);
-        io.to(gameCode).emit('new-question', { question: firstQuestion, selectedPlayer });
-        io.to(gameCode).emit('game-started');
-
-        console.log(`Game ${gameCode} started with first question for player ${selectedPlayer}`);
+        // Shuffle friend questions and combine with the rest
+        selectedQuestions = shuffleArray(friendQuestions).concat(otherQuestions);
+      
+      } else if (game.gameType === 'random') {
+        console.log("enter random");
+        // Select only random-type and friend-type questions first
+        const randomAndFriendQuestions = allQuestions.filter(q => q.type === 'random' || q.type === 'friend');
+        console.log(randomAndFriendQuestions);
+        const otherQuestions = allQuestions.filter(q => q.type !== 'random' && q.type !== 'friend');
+        console.log("new ");
+        console.log(otherQuestions);
+        // Shuffle selected questions and combine with the rest
+        selectedQuestions = shuffleArray(randomAndFriendQuestions).concat(otherQuestions);
+      
       } else {
-        console.log(`Game not found when trying to start: ${gameCode}`);
+        // No specific type; shuffle all questions
+        console.log("enter else");
+        selectedQuestions = shuffleArray(allQuestions);
       }
-    } catch (err) {
-      console.error('Error starting game:', err);
+      console.log(selectedQuestions);
+
+      game.questions = selectedQuestions;
+      game.currentQuestionIndex = 0;
+      await game.save();
+
+      // Send the first question to a randomly selected player
+      const activePlayers = game.players;
+      const selectedPlayer = activePlayers[game.currentQuestionIndex % activePlayers.length].name;
+      const firstQuestion = game.questions[0];
+      io.to(gameCode).emit('new-question', { question: firstQuestion, selectedPlayer });
+      io.to(gameCode).emit('game-started');
+
+      console.log(`Game ${gameCode} started with first question for player ${selectedPlayer}`);
+
     }
-  });
+  } catch (err) {
+    console.error('Error starting game:', err);
+  }
+});
 
   // Event listener for getting the next question
   socket.on('next-question', async (gameCode) => {
     console.log(`Getting next question for game: ${gameCode}`);
-
+  
     try {
       const game = await Game.findOne({ code: gameCode });
       
       if (game) {
-        // Move to the next question
         game.currentQuestionIndex += 1;
-
+  
         if (game.currentQuestionIndex < game.questions.length) {
-          const nextQuestion = game.questions[game.currentQuestionIndex];
-
-          // Choose a random player to answer the next question
-          const randomPlayerIndex = Math.floor(Math.random() * game.players.length);
-          const selectedPlayer = game.players[randomPlayerIndex].name;
-
-          // Save the updated game
-          await game.save();
-
-          // Emit the next question and the selected player
-          io.to(gameCode).emit('new-question', { question: nextQuestion, selectedPlayer });
-          console.log(`Next question sent for game ${gameCode}: ${nextQuestion}`);
+          // Filter to get only active players
+          const activePlayers = game.players.filter(player => io.sockets.sockets.get(player.socketId));
+          
+          if (activePlayers.length > 0) {
+            const nextQuestion = game.questions[game.currentQuestionIndex];
+            const selectedPlayer = activePlayers[game.currentQuestionIndex % activePlayers.length].name;
+            
+            await game.save();
+  
+            io.to(gameCode).emit('new-question', { question: nextQuestion, selectedPlayer });
+          } else {
+            // End game if no active players
+            io.to(gameCode).emit('game-ended');
+            game.gameOver = true;
+            await game.save();
+          }
         } else {
           io.to(gameCode).emit('game-ended');
-          console.log(`All questions answered for game ${gameCode}.`);
         }
-      } else {
-        console.log(`Game not found when trying to get the next question: ${gameCode}`);
       }
     } catch (err) {
       console.error('Error getting next question:', err);
@@ -201,22 +224,34 @@ io.on('connection', (socket) => {
   });
 
   // Clean up when a user disconnects
-  socket.on('disconnect', async () => {
-    console.log(`User disconnected: ${socket.id}`);
-    const rooms = Object.keys(socket.rooms);
-    for (const room of rooms) {
-      if (room !== socket.id) { // Exclude the socket's own room
-        const game = await Game.findOne({ code: room });
-        if (game) {
-          game.players = game.players.filter(player => player.socketId !== socket.id);
-          await game.save();
-          console.log(`Player removed from game ${room}: ${socket.id}`);
+ // Clean up when a user disconnects
+socket.on('disconnect', async () => {
+  console.log(`User disconnected: ${socket.id}`);
+  const rooms = Object.keys(socket.rooms); // Get the rooms the socket is in
+  for (const room of rooms) {
+    if (room !== socket.id) { // Ignore the socket's own ID room
+      const game = await Game.findOne({ code: room });
+      if (game) {
+        // Remove the disconnected player
+        game.players = game.players.filter(player => player.socketId !== socket.id);
+        await game.save();
+        
+        if (game.players.length > 0) {
           io.to(room).emit('players-updated', game.players);
+        } else {
+          // End the game if no players are left
+          game.gameOver = true;
+          await game.save();
+          io.to(room).emit('game-ended');
         }
+        
+        console.log(`Player removed from game ${room}: ${socket.id}`);
       }
     }
-  });
+  }
 });
+});
+
 
 // Start the server
 const PORT = process.env.PORT || 3001;
