@@ -105,27 +105,37 @@ socket.on('join-game', async ({ gameCode, playerName }, callback) => {
   });
 
   // Event listener for creating a new game
-  socket.on('create-game', async (playerName, gameType,callback) => {
-    console.log(`User ${playerName} is creating a new game.`);
-    console.log(gameType);
-    const gameCode = generateGameCode();
-
-    const newGame = new Game({
-      code: gameCode,
-      players: [{ name: playerName, socketId: socket.id }],
-      questions: [], // Questions will be added when the game starts
-      currentQuestionIndex: 0, // Track the current question index
-      gameType:gameType,
-      creatorSocketId: socket.id,
-    });
-
-    await newGame.save();
-    socket.join(gameCode);
-    console.log(`New game created with code: ${gameCode}`);
-
-    callback(gameCode); // Send back the new game code to the client
-    io.to(gameCode).emit('players-updated', newGame.players);
+  socket.on('create-game', async (playerName, gameType, callback) => {
+    try {
+      console.log(`User ${playerName} is creating a new game.`);
+      console.log(gameType);
+      
+      const gameCode = generateGameCode();
+  
+      const newGame = new Game({
+        code: gameCode,
+        players: [{ name: playerName, socketId: socket.id }],
+        questions: [], // Questions will be added when the game starts
+        currentQuestionIndex: 0, // Track the current question index
+        gameType: gameType,
+        creatorSocketId: socket.id,
+      });
+  
+      await newGame.save();
+      socket.join(gameCode);
+      console.log(`New game created with code: ${gameCode}`);
+  
+      // Check if the callback function is defined before calling it
+      if (typeof callback === 'function') {
+        callback(gameCode); // Send back the new game code to the client
+      }
+  
+      io.to(gameCode).emit('players-updated', newGame.players);
+    } catch (error) {
+      console.error("Error creating game:", error);
+    }
   });
+  
    // Event listener for starting the game
 socket.on('start-game', async (gameCode) => {
   console.log(`Starting game: ${gameCode}`);
