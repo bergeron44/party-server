@@ -152,31 +152,25 @@ socket.on('start-game', async (gameCode) => {
         console.log("enter friends");
         // Select only friend-type questions first
         const friendQuestions = allQuestions.filter(q => q.type === 'friend');
-        console.log(friendQuestions);
         const otherQuestions = allQuestions.filter(q => q.type !== 'friend');
-        console.log("new ");
-        console.log(otherQuestions);
-        
+        const shuffleotherQuestions=shuffleArray(otherQuestions);
         // Shuffle friend questions and combine with the rest
-        selectedQuestions = shuffleArray(friendQuestions).concat(otherQuestions);
+        selectedQuestions = shuffleArray(friendQuestions).concat(shuffleotherQuestions);
       
       } else if (game.gameType === 'random') {
         console.log("enter random");
         // Select only random-type and friend-type questions first
         const randomAndFriendQuestions = allQuestions.filter(q => q.type === 'random' || q.type === 'friend');
-        console.log(randomAndFriendQuestions);
         const otherQuestions = allQuestions.filter(q => q.type !== 'random' && q.type !== 'friend');
-        console.log("new ");
-        console.log(otherQuestions);
+        const shuffleotherQuestions=shuffleArray(otherQuestions);
         // Shuffle selected questions and combine with the rest
-        selectedQuestions = shuffleArray(randomAndFriendQuestions).concat(otherQuestions);
+        selectedQuestions = shuffleArray(randomAndFriendQuestions).concat(shuffleotherQuestions);
       
       } else {
         // No specific type; shuffle all questions
         console.log("enter else");
         selectedQuestions = shuffleArray(allQuestions);
       }
-      console.log(selectedQuestions);
 
       game.questions = selectedQuestions;
       game.currentQuestionIndex = 0;
