@@ -32,7 +32,36 @@ const QuestionSchema = new mongoose.Schema({
 });
 
 const Question = mongoose.model('Question', QuestionSchema);
+// API Routes
+// GET route to fetch all questions
+app.get('/api/questions', async (req, res) => {
+  try {
+    const questions = await Question.find();
+    res.json(questions);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching questions' });
+  }
+});
 
+// PUT route to update a question by its ID
+app.put('/api/questions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { questionText, questionType } = req.body;
+    const updatedQuestion = await Question.findByIdAndUpdate(
+      id,
+      { questionText, questionType },
+      { new: true }
+    );
+    if (updatedQuestion) {
+      res.json(updatedQuestion);
+    } else {
+      res.status(404).json({ message: 'Question not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating question' });
+  }
+});
 // Define Game Schema
 const GameSchema = new mongoose.Schema({
   code: String,
@@ -45,7 +74,17 @@ const GameSchema = new mongoose.Schema({
 });
 
 const Game = mongoose.model('Game', GameSchema);
-
+// Delete all games
+app.delete('/api/games/delete', async (req, res) => {
+  try {
+      // Delete all games
+      await Game.deleteMany({}); // Use Game instead of LiveGame
+      res.status(200).json({ message: 'All games have been deleted successfully.' });
+  } catch (error) {
+      console.error('Error deleting games:', error);
+      res.status(500).json({ error: 'Failed to delete games' });
+  }
+});
 // Function to generate a unique game code
 const generateGameCode = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
