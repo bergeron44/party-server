@@ -67,9 +67,9 @@ const GameSchema = new mongoose.Schema({
   code: String,
   questions: [QuestionSchema], // Each game will have its own list of questions
   currentQuestionIndex: { type: Number, default: 0 }, // Track current question number
+  currentPlayerIndex: { type: Number, default: 0 }, // Track current question number
   players: [{ name: String, score: { type: Number, default: 0 }, socketId: String }],
   gameOver: { type: Boolean, default: false },
-  gameType: {type:String,default:"All"},
   creatorSocketId: String,
 });
 
@@ -85,6 +85,15 @@ app.delete('/api/games/delete', async (req, res) => {
       res.status(500).json({ error: 'Failed to delete games' });
   }
 });
+// GET route to fetch all games
+app.get('/api/games', async (req, res) => {
+  try {
+    const games = await Game.find();
+    res.json(games);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching games' });
+  }
+});
 // Function to generate a unique game code
 const generateGameCode = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -92,13 +101,68 @@ const generateGameCode = () => {
 
 
 // Function to shuffle an array (Fisher-Yates shuffle)
-const shuffleArray = (array) => {
-  for (let i = array.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
+async function getShuffledQuestions() {
+  // שליפת כל השאלות
+  const allQuestions = await Question.find();
+  
+  // פילטר לשאלות עם rate בין 1 ל-5
+  const filteredQuestions = allQuestions.filter(q => q.rate >= 1 && q.rate <= 5);
+
+  // מיפוי השאלות לפי דירוג
+  const questionsByRate = {
+    1: [],
+    2: [],
+    3: [],
+    4: [],
+    5: []
+  };
+
+  // מיפוי כל שאלה לפי הדירוג שלה
+  filteredQuestions.forEach(question => {
+    questionsByRate[question.rate].push(question);
+  });
+
+  // קביעת מספר השאלות שנרצה מכל דירוג (לדוגמה 10 שאלות לכל דירוג)
+  const questionsPerRate = 10;
+
+  // משתנה לאחסון השאלות שנבחרו
+  let selectedQuestions = [];
+
+  // השתמש בשאלות מהדירוגים, ואם לא מספיק, שלוף משאר הדירוגים
+  let missingQuestionsCount = 0;
+
+  // בודק לכל דירוג אם יש מספיק שאלות
+  for (let rate = 1; rate <= 5; rate++) {
+    const availableQuestions = questionsByRate[rate];
+
+    if (availableQuestions.length < questionsPerRate) {
+      // אם אין מספיק שאלות, חישוב כמה חסרות
+      missingQuestionsCount += questionsPerRate - availableQuestions.length;
+    }
+
+    // הוסף את השאלות לדירוג הנוכחי (לא יותר מ-questionsPerRate)
+    selectedQuestions = selectedQuestions.concat(availableQuestions.slice(0, questionsPerRate));
   }
-  return array;
-};
+
+  // אם יש שאלות חסרות, משלים משאר הדירוגים
+  if (missingQuestionsCount > 0) {
+    // מיצוי כל השאלות שנותרו מכל הדירוגים
+    const remainingQuestions = Object.values(questionsByRate)
+      .flat()
+      .filter(q => !selectedQuestions.includes(q));
+
+    // ערבוב השאלות שנותרו
+    const shuffledRemainingQuestions = remainingQuestions.sort(() => Math.random() - 0.5);
+
+    // הוסף את השאלות החסרות
+    selectedQuestions = selectedQuestions.concat(shuffledRemainingQuestions.slice(0, missingQuestionsCount));
+  }
+
+  // ערבוב כל השאלות שנבחרו
+  const shuffledQuestions = selectedQuestions.sort(() => Math.random() - 0.5);
+
+  return shuffledQuestions; // מחזיר את השאלות המעורבבות
+}
 
 // Socket.io connection
 io.on('connection', (socket) => {
@@ -113,8 +177,6 @@ socket.on('join-game', async ({ gameCode, playerName }, callback) => {
       
       if (game) {
         console.log(`Game found: ${gameCode}`);
-        socket.join(gameCode);
-        
         // Check if the player is already in the game
         const existingPlayer = game.players.find(player => player.name === playerName);
         if (existingPlayer) {
@@ -122,14 +184,14 @@ socket.on('join-game', async ({ gameCode, playerName }, callback) => {
           callback({ success: false, message: 'Player already in the game' });
           return;
         }
-  
+        socket.join(gameCode);
         // Add the player to the game
         game.players.push({ name: playerName, socketId: socket.id });
         await game.save();
         console.log(`Player ${playerName} joined game: ${gameCode}`);
   
         // Notify all players in the game room about the updated player list
-        io.to(gameCode).emit('players-updated', game.players);
+        io.to(gameCode).emit('players-updated', game);
   
         // Send success response to the client
         callback({ success: true, message: 'Successfully joined the game' });
@@ -144,32 +206,31 @@ socket.on('join-game', async ({ gameCode, playerName }, callback) => {
   });
 
   // Event listener for creating a new game
-  socket.on('create-game', async (playerName, gameType, callback) => {
+  socket.on('create-game', async (playerName, callback) => {
     try {
       console.log(`User ${playerName} is creating a new game.`);
-      console.log(gameType);
       
       const gameCode = generateGameCode();
-  
+      const allQuestions = await getShuffledQuestions();
       const newGame = new Game({
         code: gameCode,
         players: [{ name: playerName, socketId: socket.id }],
-        questions: [], // Questions will be added when the game starts
+        questions: allQuestions, // Questions will be added when the game starts
         currentQuestionIndex: 0, // Track the current question index
-        gameType: gameType,
         creatorSocketId: socket.id,
       });
-  
+      
       await newGame.save();
       socket.join(gameCode);
       console.log(`New game created with code: ${gameCode}`);
+      console.log(allQuestions);
   
       // Check if the callback function is defined before calling it
       if (typeof callback === 'function') {
         callback(gameCode); // Send back the new game code to the client
       }
   
-      io.to(gameCode).emit('players-updated', newGame.players);
+      io.to(gameCode).emit('creator-first-update', newGame);
     } catch (error) {
       console.error("Error creating game:", error);
     }
@@ -181,45 +242,14 @@ socket.on('start-game', async (gameCode) => {
 
   try {
     const game = await Game.findOne({ code: gameCode });
-    
     if (game) {
-      const allQuestions = await Question.find();
-      let selectedQuestions;
-      console.log(game.gameType);
-      // Filter questions based on game type
-      if (game.gameType === 'friends') {
-        console.log("enter friends");
-        // Select only friend-type questions first
-        const friendQuestions = allQuestions.filter(q => q.type === 'friend');
-        const otherQuestions = allQuestions.filter(q => q.type !== 'friend');
-        const shuffleotherQuestions=shuffleArray(otherQuestions);
-        // Shuffle friend questions and combine with the rest
-        selectedQuestions = shuffleArray(friendQuestions).concat(shuffleotherQuestions);
-      
-      } else if (game.gameType === 'random') {
-        console.log("enter random");
-        // Select only random-type and friend-type questions first
-        const randomAndFriendQuestions = allQuestions.filter(q => q.type === 'random' || q.type === 'friend');
-        const otherQuestions = allQuestions.filter(q => q.type !== 'random' && q.type !== 'friend');
-        const shuffleotherQuestions=shuffleArray(otherQuestions);
-        // Shuffle selected questions and combine with the rest
-        selectedQuestions = shuffleArray(randomAndFriendQuestions).concat(shuffleotherQuestions);
-      
-      } else {
-        // No specific type; shuffle all questions
-        console.log("enter else");
-        selectedQuestions = shuffleArray(allQuestions);
-      }
-
-      game.questions = selectedQuestions;
       game.currentQuestionIndex = 0;
       await game.save();
-
-      // Send the first question to a randomly selected player
       const activePlayers = game.players;
-      const selectedPlayer = activePlayers[game.currentQuestionIndex % activePlayers.length].name;
+      game.currentPlayerIndex= Math.floor(Math.random() * activePlayers.length);
+      const selectedPlayer = activePlayers[game.currentPlayerIndex].name;
       const firstQuestion = game.questions[0];
-      io.to(gameCode).emit('new-question', { question: firstQuestion, selectedPlayer });
+      io.to(gameCode).emit('new-question', { question: game.questions[0], selectedPlayer });
       io.to(gameCode).emit('game-started');
 
       console.log(`Game ${gameCode} started with first question for player ${selectedPlayer}`);
@@ -233,24 +263,23 @@ socket.on('start-game', async (gameCode) => {
   // Event listener for getting the next question
   socket.on('next-question', async (gameCode) => {
     console.log(`Getting next question for game: ${gameCode}`);
-  
     try {
-      const game = await Game.findOne({ code: gameCode });
+      const game= await Game.findOne({ code: gameCode });
       
       if (game) {
-        game.currentQuestionIndex += 1;
-  
+        game.currentQuestionIndex+=1;
+        game.currentPlayerIndex+=1;
         if (game.currentQuestionIndex < game.questions.length) {
           // Filter to get only active players
           const activePlayers = game.players.filter(player => io.sockets.sockets.get(player.socketId));
           
           if (activePlayers.length > 0) {
             const nextQuestion = game.questions[game.currentQuestionIndex];
-            const selectedPlayer = activePlayers[game.currentQuestionIndex % activePlayers.length].name;
+            const selectedPlayer = activePlayers[game.currentPlayerIndex % activePlayers.length].name;
             
             await game.save();
   
-            io.to(gameCode).emit('new-question', { question: nextQuestion, selectedPlayer });
+            io.to(gameCode).emit('new-question', { question: game.questions[game.currentQuestionIndex] , selectedPlayer });
           } else {
             // End game if no active players
             io.to(gameCode).emit('game-ended');
@@ -266,7 +295,24 @@ socket.on('start-game', async (gameCode) => {
     }
   });
 
-  // Clean up when a user disconnects
+  socket.on('check-player-status', async (gameCode, callback) => {
+    try {
+      // חיפוש המשחק בבסיס הנתונים
+      const game = await Game.findOne({ code: gameCode });
+      
+      if (!game) {
+        return callback({ isValid: false });
+      }
+      
+      // בדיקה האם ה-socket.id של המשתמש נמצא ברשימת השחקנים
+      const isPlayerValid = game.players.some(player => player.socketId === socket.id);
+      callback({ isValid: isPlayerValid });
+    } catch (error) {
+      console.error('Error checking player status:', error);
+      callback({ isValid: false, error: 'Server error' });
+    }
+  });
+  
  // Clean up when a user disconnects
 socket.on('disconnect', async () => {
   console.log(`User disconnected: ${socket.id}`);
@@ -280,7 +326,7 @@ socket.on('disconnect', async () => {
         await game.save();
         
         if (game.players.length > 0) {
-          io.to(room).emit('players-updated', game.players);
+          io.to(room).emit('players-updated', game);
         } else {
           // End the game if no players are left
           game.gameOver = true;
