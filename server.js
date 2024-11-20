@@ -163,6 +163,46 @@ async function getShuffledQuestions() {
 
   return shuffledQuestions; // מחזיר את השאלות המעורבבות
 }
+async function getOrderedShuffledQuestions() {
+  // שליפת כל השאלות
+  const allQuestions = await Question.find();
+  
+  // פילטר לשאלות עם rate בין 1 ל-5
+  const filteredQuestions = allQuestions.filter(q => q.rate >= 1 && q.rate <= 5);
+
+  // מיפוי השאלות לפי דירוג
+  const questionsByRate = {
+    1: [],
+    2: [],
+    3: [],
+    4: [],
+    5: []
+  };
+
+  // מיפוי כל שאלה לפי הדירוג שלה
+  filteredQuestions.forEach(question => {
+    questionsByRate[question.rate].push(question);
+  });
+
+  // קביעת מספר השאלות שנרצה מכל דירוג
+  const questionsPerRate = 10;
+
+  // משתנה לאחסון השאלות בסדר מוגדר (10 לכל דירוג)
+  let orderedQuestions = [];
+
+  // הוספת שאלות לכל דירוג בצורה רנדומלית
+  for (let rate = 1; rate <= 5; rate++) {
+    const availableQuestions = questionsByRate[rate];
+
+    // ערבוב שאלות לדירוג הנוכחי
+    const shuffledQuestions = availableQuestions.sort(() => Math.random() - 0.5);
+
+    // בחירת 10 שאלות או פחות אם אין מספיק
+    orderedQuestions = orderedQuestions.concat(shuffledQuestions.slice(0, questionsPerRate));
+  }
+
+  return orderedQuestions; // מחזיר את השאלות בסדר הנדרש
+}
 
 // Socket.io connection
 io.on('connection', (socket) => {
@@ -211,7 +251,7 @@ socket.on('join-game', async ({ gameCode, playerName }, callback) => {
       console.log(`User ${playerName} is creating a new game.`);
       
       const gameCode = generateGameCode();
-      const allQuestions = await getShuffledQuestions();
+      const allQuestions = await getOrderedShuffledQuestions();
       const newGame = new Game({
         code: gameCode,
         players: [{ name: playerName, socketId: socket.id }],
