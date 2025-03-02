@@ -26,7 +26,8 @@ mongoose.connect(dbURI, { useNewUrlParser: true, useUnifiedTopology: true })
 
 // Define Question Schema
 const QuestionSchema = new mongoose.Schema({
-  question: String,
+  question: String,        // Question in Hebrew (default)
+  questionEnglish: String, // Question in English
   rate: Number,
   type: String,
 });
@@ -71,6 +72,10 @@ const GameSchema = new mongoose.Schema({
   players: [{ name: String, score: { type: Number, default: 0 }, socketId: String }],
   gameOver: { type: Boolean, default: false },
   creatorSocketId: String,
+  location: { 
+    type: { lat: Number, lng: Number }, 
+    default: { lat: 31.252973, lng: 34.791462 } // Default to Be'er Sheva
+  }
 });
 
 const Game = mongoose.model('Game', GameSchema);
@@ -246,7 +251,7 @@ socket.on('join-game', async ({ gameCode, playerName }, callback) => {
   });
 
   // Event listener for creating a new game
-  socket.on('create-game', async (playerName, callback) => {
+  socket.on('create-game', async (playerName,location, callback) => {
     try {
       console.log(`User ${playerName} is creating a new game.`);
       
@@ -258,6 +263,7 @@ socket.on('join-game', async ({ gameCode, playerName }, callback) => {
         questions: allQuestions, // Questions will be added when the game starts
         currentQuestionIndex: 0, // Track the current question index
         creatorSocketId: socket.id,
+        location: location || { lat: 31.252973, lng: 34.791462 }, // Use provided location or default to Be'er Sheva
       });
       
       await newGame.save();
